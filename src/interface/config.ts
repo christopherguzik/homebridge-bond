@@ -7,6 +7,12 @@ export interface BondConfig {
   hide_device_ids?: string[];
   ms_between_actions?: number;
   max_concurrent_requests?: number;
+  ultra_low_fans?: UltraLowFanConfig[];
+}
+
+export interface UltraLowFanConfig {
+  fan_device_id: string;
+  ultra_low_device_id: string;
 }
 
 export interface BondPlatformConfig extends PlatformConfig {
@@ -48,7 +54,7 @@ export namespace BondPlatformConfig {
 
 // eslint-disable-next-line @typescript-eslint/no-namespace
 export namespace BondConfig {
-  function isValidBondHost(ipAddress: string): boolean {
+  const isValidBondHost = (ipAddress: string): boolean => {
     if (ipAddress.trim() !== ipAddress || ipAddress.length === 0) {
       return false;
     }
@@ -71,7 +77,7 @@ export namespace BondConfig {
     } catch (_error) {
       return false;
     }
-  }
+  };
 
   export function isValid(platform: BondPlatform, config: BondConfig): boolean {
     function evaluate(type: string, key: string, value?: any): boolean {
@@ -111,6 +117,25 @@ export namespace BondConfig {
         && Number.isInteger(config.max_concurrent_requests)
         && config.max_concurrent_requests > 0);
 
-    return validIP && validToken && validHideDeviceIds && validSpaceOutActions && validMaxConcurrentRequests;
+    let validUltraLowFans = true;
+    if (config.ultra_low_fans !== undefined) {
+      const mappings = config.ultra_low_fans;
+      const ids = new Set<string>();
+      validUltraLowFans = Array.isArray(mappings) && mappings.every(mapping => {
+        if (!mapping || typeof mapping.fan_device_id !== 'string' || typeof mapping.ultra_low_device_id !== 'string'
+          || !/^[a-zA-Z0-9_-]+$/.test(mapping.fan_device_id)
+          || !/^[a-zA-Z0-9_-]+$/.test(mapping.ultra_low_device_id)
+          || mapping.fan_device_id === mapping.ultra_low_device_id || ids.has(mapping.fan_device_id)) {
+          return false;
+        }
+        ids.add(mapping.fan_device_id);
+        return true;
+      });
+      if (!validUltraLowFans) {
+        platform.log.error('Invalid ultra_low_fans: each mapping needs distinct, valid fan and ultra-low device IDs, with no duplicate fan IDs.');
+      }
+    }
+
+    return validIP && validToken && validHideDeviceIds && validSpaceOutActions && validMaxConcurrentRequests && validUltraLowFans;
   }
 }

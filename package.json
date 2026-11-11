@@ -1,6 +1,6 @@
 {
-  "name": "homebridge-bond",
-  "version": "3.4.0-beta.1",
+  "name": "homebridge-bond-ultra-low-support-eglo",
+  "version": "0.1.0-beta.1",
   "description": "A homebridge plugin to control your Bond devices over the v2 API.",
   "license": "MIT",
   "main": "dist/index.js",
@@ -11,7 +11,7 @@
     "dev": "tsc --watch & nodemon dist",
     "build": "rimraf ./dist && tsc -p tsconfig-build.json",
     "prepublishOnly": "npm run lint && npm run build",
-    "test": "mocha -r ts-node/register 'tests/**/*.spec.ts'",
+    "test": "mocha -r ts-node/register \"tests/**/*.spec.ts\"",
     "coverage": "nyc -r lcov -e .ts -x \"*.spec.ts\" npm run test"
   },
   "keywords": [
@@ -23,10 +23,10 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git://github.com/aarons22/homebridge-bond.git"
+    "url": "https://github.com/christopherguzik/homebridge-bond.git"
   },
   "bugs": {
-    "url": "http://github.com/aarons22/homebridge-bond/issues"
+    "url": "https://github.com/christopherguzik/homebridge-bond/issues"
   },
   "engines": {
     "node": "^18.20.4 || ^20.15.1 || ^22 || ^24",
@@ -69,6 +69,6 @@
     "js-yaml@<3.14.2": "^3.14.2",
     "js-yaml@4.0.0 - 4.1.0": "^4.1.1"
   },
-  "homepage": "https://github.com/aarons22/homebridge-bond#readme",
+  "homepage": "https://github.com/christopherguzik/homebridge-bond#readme",
   "author": "Aaron Sapp"
 }

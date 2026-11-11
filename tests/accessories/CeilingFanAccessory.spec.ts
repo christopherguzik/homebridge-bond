@@ -10,6 +10,7 @@ import { PlatformAccessory } from 'homebridge';
 import { MockPlatformAccessory, MockCharacteristic, CharacteristicTokens, ServiceTokens } from '../helpers/hapStubs';
 import { createMockPlatform, createMockBond } from '../helpers/platformStubs';
 import { DeviceFactory } from '../factories/device';
+import { UltraLowFanConfig } from '../../src/interface/config';
 
 const FAN_ACTIONS_BASIC = [Action.TurnOn, Action.TurnOff, Action.SetSpeed];
 const FAN_ACTIONS_WITH_LIGHT = [...FAN_ACTIONS_BASIC, Action.ToggleLight];
@@ -21,6 +22,7 @@ function buildFan(
   maxSpeed?: number,
   configOverrides?: Record<string, unknown>,
   subtype?: string,
+  ultraLowFans?: UltraLowFanConfig[],
 ) {
   const device = DeviceFactory.createDevice({
     type: DeviceType.CeilingFan,
@@ -31,6 +33,7 @@ function buildFan(
   const platform = createMockPlatform(configOverrides);
   const accessory = new MockPlatformAccessory(device, 'Living Room Fan');
   const bond = createMockBond();
+  bond.config.ultra_low_fans = ultraLowFans;
   const acc = new CeilingFanAccessory(
     platform as unknown as BondPlatform,
     accessory as unknown as PlatformAccessory,
@@ -57,6 +60,111 @@ function rotationDirection(accessory: MockPlatformAccessory) {
 
 describe('CeilingFanAccessory', () => {
   afterEach(() => sinon.restore());
+
+  describe('EGLO ultra-low fan', () => {
+    const mapping = [{ fan_device_id: '1234', ultra_low_device_id: 'ultra1' }];
+    const buildEglo = (config?: Record<string, unknown>) => buildFan(FAN_ACTIONS_WITH_LIGHT, 5, config, undefined, mapping);
+
+    it('exposes six evenly spaced steps and maps all speeds', async () => {
+      const { acc, accessory, bond, device } = buildEglo();
+      await Promise.resolve();
+      expect(acc.maxValue).to.equal(100);
+      expect(acc.minStep).to.equal(100 / 6);
+      const speed = rotationSpeed(accessory);
+      await speed.simulateSet(100 / 6);
+      sinon.assert.calledOnceWithExactly(bond.api.setUltraLow, 'ultra1');
+      for (let step = 2; step <= 6; step++) {
+        await speed.simulateSet(step * 100 / 6);
+        sinon.assert.calledWithExactly(bond.api.setEgloFanSpeed, device, step - 1);
+      }
+    });
+
+    it('supports discrete speed values and leaves other fans unchanged', async () => {
+      const { acc, accessory, bond } = buildEglo({ fan_speed_values: true });
+      await Promise.resolve();
+      expect(acc.minStep).to.equal(1);
+      expect(acc.maxValue).to.equal(6);
+      await rotationSpeed(accessory).simulateSet(1);
+      sinon.assert.calledOnceWithExactly(bond.api.setUltraLow, 'ultra1');
+      const other = buildFan(FAN_ACTIONS_BASIC, 5, undefined, undefined,
+        [{ fan_device_id: 'other', ultra_low_device_id: 'ultra1' }]);
+      expect(other.acc.maxValue).to.equal(100);
+      expect(other.acc.minStep).to.equal(20);
+    });
+
+    it('preserves commanded power and speed across stale BPUP while still updating lights', async () => {
+      const { acc, accessory } = buildEglo();
+      await Promise.resolve();
+      await rotationSpeed(accessory).simulateSet(100 / 6);
+      acc.updateState({ power: 0, speed: 5, light: 1 });
+      expect(fanOn(accessory).value).to.equal(true);
+      expect(rotationSpeed(accessory).value).to.equal(100 / 6);
+      const light = accessory.getService(ServiceTokens.Lightbulb)!;
+      expect(light.getCharacteristic(CharacteristicTokens.On).value).to.equal(true);
+    });
+
+    it('turns the real fan off and restores ultra low when switched back on', async () => {
+      const { accessory, bond, device } = buildEglo();
+      await Promise.resolve();
+      await rotationSpeed(accessory).simulateSet(100 / 6);
+      await fanOn(accessory).simulateSet(false);
+      sinon.assert.calledOnceWithExactly(bond.api.setEgloFanPower, device, false);
+      expect(rotationSpeed(accessory).value).to.equal(0);
+      await fanOn(accessory).simulateSet(true);
+      sinon.assert.calledTwice(bond.api.setUltraLow);
+    });
+
+    it('uses the real fan for a zero speed and a normal speed after ultra low', async () => {
+      const { accessory, bond, device } = buildEglo({ fan_speed_values: true });
+      await Promise.resolve();
+      await rotationSpeed(accessory).simulateSet(1);
+      await rotationSpeed(accessory).simulateSet(2);
+      sinon.assert.calledOnceWithExactly(bond.api.setEgloFanSpeed, device, 1);
+      await rotationSpeed(accessory).simulateSet(0);
+      sinon.assert.calledOnceWithExactly(bond.api.setEgloFanPower, device, false);
+    });
+
+    it('serializes overlapping speed and power requests', async () => {
+      const { accessory, bond } = buildEglo({ fan_speed_values: true });
+      await Promise.resolve();
+      let release!: () => void;
+      bond.api.setUltraLow.onFirstCall().returns(new Promise<void>(resolve => { release = resolve; }));
+      const speedRequest = rotationSpeed(accessory).simulateSet(1);
+      await Promise.resolve();
+      const powerRequest = fanOn(accessory).simulateSet(true);
+      release();
+      await Promise.all([speedRequest, powerRequest]);
+      sinon.assert.notCalled(bond.api.setEgloFanPower);
+      sinon.assert.calledTwice(bond.api.setUltraLow);
+    });
+
+    it('propagates command errors instead of claiming success', async () => {
+      const { accessory, bond, platform } = buildEglo();
+      await Promise.resolve();
+      bond.api.setUltraLow.rejects(new Error('failed'));
+      try {
+        await rotationSpeed(accessory).simulateSet(100 / 6);
+        expect.fail('Expected command failure');
+      } catch (error) {
+        expect((error as Error).message).to.equal('failed');
+      }
+      sinon.assert.calledOnce(platform.error);
+      expect(fanOn(accessory).value).to.equal(false);
+    });
+
+    it('rejects configuration at the fan if Bond reports a different speed count', () => {
+      const { acc, platform } = buildFan(FAN_ACTIONS_BASIC, 3, undefined, undefined, mapping);
+      expect(acc.minStep).to.equal(33);
+      sinon.assert.calledOnce(platform.error);
+    });
+
+    it('maps Bond state to normal speeds before the first HomeKit command', async () => {
+      const { acc, accessory } = buildEglo();
+      await Promise.resolve();
+      acc.updateState({ power: 1, speed: 5 });
+      expect(rotationSpeed(accessory).value).to.equal(100);
+    });
+  });
 
   // -------------------------------------------------------------------------
   // Service creation

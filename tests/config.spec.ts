@@ -57,6 +57,26 @@ describe('BondConfig.isValid()', () => {
     expect(valid).to.equal(true);
   });
 
+  it('accepts per-Bond ultra-low fan mappings', () => {
+    expect(BondConfig.isValid(platform, {
+      ip_address: 'bond.local', token: 'test',
+      ultra_low_fans: [{ fan_device_id: 'fan1', ultra_low_device_id: 'ultra1' }],
+    })).to.equal(true);
+  });
+
+  it('rejects invalid and duplicate ultra-low mappings', () => {
+    for (const mappings of [
+      [{ fan_device_id: 'fan1', ultra_low_device_id: 'fan1' }],
+      [{ fan_device_id: 'fan1', ultra_low_device_id: '../other' }],
+      [{ fan_device_id: 'fan1', ultra_low_device_id: 'ultra1' },
+        { fan_device_id: 'fan1', ultra_low_device_id: 'ultra2' }],
+    ]) {
+      expect(BondConfig.isValid(platform, {
+        ip_address: 'bond.local', token: 'test', ultra_low_fans: mappings,
+      })).to.equal(false);
+    }
+  });
+
   it('rejects ip_address values containing a path', () => {
     const valid = BondConfig.isValid(platform, {
       ip_address: '192.168.1.100/v2/devices',

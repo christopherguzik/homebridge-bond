@@ -6,4 +6,4 @@ export const PLATFORM_NAME = 'Bond';
 /**
  * This must match the name of your plugin as defined the package.json
  */
-export const PLUGIN_NAME = 'homebridge-bond';
+export const PLUGIN_NAME = 'homebridge-bond-ultra-low-support-eglo';

@@ -1,5 +1,12 @@
 # GitHub Workflows
 
+> Fork note: the Release workflow is manual only. The package is
+> `homebridge-bond-ultra-low-support-eglo` and the GitHub owner is `christopherguzik`.
+> First publish the package using an authorized npm account, then configure npm trusted
+> publishing for `christopherguzik/homebridge-bond` and `release.yml`. References below
+> to the upstream package, owner, automatic release, or token fallback are not applicable
+> to this fork.
+
 This directory contains automated workflows for the homebridge-bond project.
 
 ## Workflows

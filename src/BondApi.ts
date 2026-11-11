@@ -28,8 +28,8 @@ export class BondApi {
   private maxConcurrentRequests: number;
   private activeRequests = 0;
   private pendingRequests: Array<() => void> = [];
-  private queueNextRequest = false;
-  private requestQueue: {device: Device, action: Action, body: unknown}[] = [];
+  private actionTail: Promise<void> = Promise.resolve();
+  private lastActionAt = 0;
 
   private formatAxiosError(error: AxiosError): string {
     const status = error.response?.status;
@@ -121,32 +121,45 @@ export class BondApi {
   // Actions
 
   private action(device: Device, action: Action, body: unknown = {}): Promise<void> {
-    return this.ms_between_actions ? 
-      this.queueRequest(device, action, body) :
-      this.request(HTTPMethod.PUT, this.uri.action(device.id, action), body);
+    return this.queueRequest(device.id, action, body, false);
   }
 
-  private queueRequest(device: Device, action: Action, body: unknown): Promise<void> {
-    if (this.queueNextRequest) {
-      this.requestQueue.push({device, action, body});
-    } else {
-      this.queueNextRequest = true;
-      this.request(HTTPMethod.PUT, this.uri.action(device.id, action), body);
-      setTimeout(() => this.unQueueRequest(), this.ms_between_actions);
-    }
-    return Promise.resolve();
+  private queueRequest(deviceId: string, action: Action, body: unknown, strict: boolean): Promise<void> {
+    const execute = async () => {
+      for (let attempt = 0; ; attempt++) {
+        const delay = Math.max(0, this.lastActionAt + (this.ms_between_actions ?? 0) - Date.now());
+        if (delay > 0) {
+          await new Promise(resolve => setTimeout(resolve, delay));
+        }
+        this.lastActionAt = Date.now();
+        try {
+          await this.request(HTTPMethod.PUT, this.uri.action(deviceId, action), body, strict);
+          return;
+        } catch (error) {
+          if (!strict || !axios.isAxiosError(error) || error.response?.data?._error_id !== 37 || attempt >= 2) {
+            throw error;
+          }
+          this.platform.log.warn(`Bond transmit queue full; retrying ${action} for device ${deviceId}.`);
+          await new Promise(resolve => setTimeout(resolve, Math.max(500, this.ms_between_actions ?? 0)));
+        }
+      }
+    };
+    const result = this.actionTail.then(execute);
+    this.actionTail = result.then(() => undefined, () => undefined);
+    return result;
   }
 
-  private unQueueRequest() {
-    const next = this.requestQueue.shift();
-    if (next) {
-      this.request(HTTPMethod.PUT, this.uri.action(next.device.id, next.action), next.body);
-      setTimeout(() => this.unQueueRequest(), this.ms_between_actions);
-    } else {
-      this.queueNextRequest = false;
-    }
+  public setUltraLow(deviceId: string): Promise<void> {
+    return this.queueRequest(deviceId, Action.TurnOn, {}, true);
   }
 
+  public setEgloFanSpeed(device: Device, speed: number): Promise<void> {
+    return this.queueRequest(device.id, Action.SetSpeed, { argument: speed }, true);
+  }
+
+  public setEgloFanPower(device: Device, on: boolean): Promise<void> {
+    return this.queueRequest(device.id, on ? Action.TurnOn : Action.TurnOff, {}, true);
+  }
   public toggleLight(device: Device): Promise<void> {
     return this.action(device, Action.ToggleLight);
   }
@@ -325,7 +338,7 @@ export class BondApi {
     });
   }
 
-  private request(method: HTTPMethod, uri: string, body: unknown = {}): Promise<any> {
+  private request(method: HTTPMethod, uri: string, body: unknown = {}, strict = false): Promise<any> {
     const bodyStr = JSON.stringify(body);
     const uuid = intformat(flakeIdGen.next(), 'hex', { prefix: '18', padstr: '0', size: 16 }); // avoid duplicate action
     const bondUuid = uuid.substring(0, 13) + uuid.substring(15); // remove '00' used for datacenter/worker in flakeIdGen
@@ -346,12 +359,16 @@ export class BondApi {
         },
         data: body,
         timeout: 10000,
+        ...(strict ? { 'axios-retry': { retries: 0 } } : {}),
       }))
       .then(response => {
         this.platform.log.debug(`Response (${bondUuid}) [${method} ${uri}] - ${JSON.stringify(response.data)}`);
         return response.data;
       })
       .catch((error: Error | AxiosError) =>  {
+        if (strict) {
+          throw error;
+        }
         if (axios.isAxiosError(error) && error.response) {
           const response = error.response;
           switch (response.status) {

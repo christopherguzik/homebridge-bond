@@ -81,7 +81,7 @@ jobs:
             
             ### Next Steps
             - Review and merge this PR
-            - The release workflow will automatically:
+            - After configuring npm trusted publishing, run the Release workflow manually to:
               - Publish to npm
               - Create a GitHub release with release notes
             

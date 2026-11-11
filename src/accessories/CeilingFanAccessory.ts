@@ -33,6 +33,11 @@ export class CeilingFanAccessory implements BondAccessory  {
   minStep: number
   maxValue: number
   values: number[]
+  private ultraLowDeviceId?: string
+  private egloSpeed?: number
+  private egloPower?: boolean
+  private egloPending = 0
+  private egloTail: Promise<void> = Promise.resolve()
 
   constructor(
     platform: BondPlatform,
@@ -47,9 +52,18 @@ export class CeilingFanAccessory implements BondAccessory  {
     const includeToggle = config.include_toggle_state;
     const device: Device = accessory.context.device;
 
-    this.values = Device.fanSpeeds(device);
-    this.minStep = Math.floor(100 / this.values.length);
-    this.maxValue = this.minStep * this.values.length;
+    const mapping = bond.config.ultra_low_fans?.find(item => item.fan_device_id === device.id);
+    if (mapping) {
+      if (device.properties?.max_speed === 5 && Device.canSetSpeed(device) && Device.hasOffOn(device)) {
+        this.ultraLowDeviceId = mapping.ultra_low_device_id;
+      } else {
+        this.platform.error(accessory, 'Ultra-low requires a fan with five Bond speeds and TurnOn, TurnOff and SetSpeed actions.');
+      }
+    }
+
+    this.values = this.ultraLowDeviceId ? [1, 2, 3, 4, 5, 6] : Device.fanSpeeds(device);
+    this.minStep = this.ultraLowDeviceId ? 100 / 6 : Math.floor(100 / this.values.length);
+    this.maxValue = this.ultraLowDeviceId ? 100 : this.minStep * this.values.length;
     if (fanSpeedValues) {
       this.minStep = 1;
       this.maxValue = this.values.length;
@@ -118,18 +132,22 @@ export class CeilingFanAccessory implements BondAccessory  {
   }
 
   updateState(state: BondState) {
-    // Power
-    this.fanService.on.updateValue(state.power === 1);
+    if (this.ultraLowDeviceId) {
+      this.updateEgloState(state);
+    } else {
+      // Power
+      this.fanService.on.updateValue(state.power === 1);
     
-    // Speed
-    if (this.fanService.rotationSpeed) {
-      let value = 0;
-      if (state.speed && state.power === 1) {
-        const index = this.values.indexOf(state.speed) + 1;
-        const step = index * this.minStep;
-        value = step;
+      // Speed
+      if (this.fanService.rotationSpeed) {
+        let value = 0;
+        if (state.speed && state.power === 1) {
+          const index = this.values.indexOf(state.speed) + 1;
+          const step = index * this.minStep;
+          value = step;
+        }
+        this.fanService.rotationSpeed.updateValue(value);
       }
-      this.fanService.rotationSpeed.updateValue(value);
     }
 
     // Rotation direction
@@ -156,6 +174,53 @@ export class CeilingFanAccessory implements BondAccessory  {
     if (this.downLightService) {
       this.downLightService.updateState(state);
     }
+  }
+
+  private updateEgloState(state: BondState): void {
+    if (this.egloPending > 0) {
+      return;
+    }
+    if (this.egloPower !== undefined) {
+      this.fanService.on.updateValue(this.egloPower);
+      if (this.fanService.rotationSpeed && this.egloSpeed !== undefined) {
+        this.fanService.rotationSpeed.updateValue(this.egloPower ? this.egloSpeed * this.minStep : 0);
+      }
+      return;
+    }
+    if (state.power !== undefined) {
+      this.fanService.on.updateValue(state.power === 1);
+    }
+    if (this.fanService.rotationSpeed && state.power !== undefined) {
+      if (state.power === 0) {
+        this.fanService.rotationSpeed.updateValue(0);
+      } else if (state.speed !== undefined && state.speed >= 1 && state.speed <= 5) {
+        this.fanService.rotationSpeed.updateValue((state.speed + 1) * this.minStep);
+      }
+    }
+  }
+
+  private async setEgloSpeed(bond: Bond, device: Device, speed: number): Promise<void> {
+    if (speed === 1) {
+      if (!this.ultraLowDeviceId) {
+        throw new Error('Ultra-low device ID is not configured.');
+      }
+      await bond.api.setUltraLow(this.ultraLowDeviceId);
+    } else {
+      await bond.api.setEgloFanSpeed(device, speed - 1);
+    }
+    this.egloSpeed = speed;
+    this.egloPower = true;
+    this.fanService.on.updateValue(true);
+    this.fanService.rotationSpeed?.updateValue(speed * this.minStep);
+  }
+
+  private runEgloCommand(command: () => Promise<void>): Promise<void> {
+    this.egloPending++;
+    const result = this.egloTail.then(command);
+    this.egloTail = result.then(() => undefined, () => undefined);
+    return result.finally(() => {
+      this.egloPending--;
+    });
   }
 
   private observe(bond: Bond): void {
@@ -200,6 +265,26 @@ export class CeilingFanAccessory implements BondAccessory  {
     }
 
     Observer.set(this.fanService.on, async (value) => {
+      if (this.ultraLowDeviceId) {
+        try {
+          await this.runEgloCommand(async () => {
+            if (value === true && this.egloSpeed !== undefined) {
+              await this.setEgloSpeed(bond, device, this.egloSpeed);
+            } else {
+              await bond.api.setEgloFanPower(device, value === true);
+              this.egloPower = value === true;
+              this.fanService.on.updateValue(this.egloPower);
+              if (!this.egloPower) {
+                this.fanService.rotationSpeed?.updateValue(0);
+              }
+            }
+          });
+        } catch (error) {
+          this.platform.error(this.accessory, `Error setting EGLO fan power: ${error}`);
+          throw error;
+        }
+        return;
+      }
       await bond.api.toggleFan(device, value)
         .then(() => { 
           this.platform.debug(this.accessory, `Set fan power: ${value}`);
@@ -222,6 +307,28 @@ export class CeilingFanAccessory implements BondAccessory  {
     this.fanService.rotationSpeed.setProps(props);
 
     Observer.set(this.fanService.rotationSpeed, async (step) => {
+      if (this.ultraLowDeviceId) {
+        const speed = Math.round(Number(step) / this.minStep);
+        if (!Number.isFinite(speed) || speed < 0 || speed > 6) {
+          throw new Error(`Invalid EGLO fan speed: ${step}`);
+        }
+        try {
+          await this.runEgloCommand(async () => {
+            if (speed === 0) {
+              await bond.api.setEgloFanPower(device, false);
+              this.egloPower = false;
+              this.fanService.on.updateValue(false);
+              this.fanService.rotationSpeed?.updateValue(0);
+            } else {
+              await this.setEgloSpeed(bond, device, speed);
+            }
+          });
+        } catch (error) {
+          this.platform.error(this.accessory, `Error setting EGLO fan speed: ${error}`);
+          throw error;
+        }
+        return;
+      }
       if (step === 0) {
         // Step of 0 is the same as turning the fan off. This is handled in the fan power observer
         return;

@@ -37,6 +37,27 @@
                 "type": "string"
               }
             },
+            "ultra_low_fans": {
+              "title": "EGLO ultra-low fans",
+              "description": "Map each five-speed fan to the separate Generic Device containing its learned ultra-low command.",
+              "type": "array",
+              "items": {
+                "type": "object",
+                "title": "Fan mapping",
+                "properties": {
+                  "fan_device_id": {
+                    "title": "Fan device ID",
+                    "type": "string",
+                    "required": true
+                  },
+                  "ultra_low_device_id": {
+                    "title": "Ultra-low Generic Device ID",
+                    "type": "string",
+                    "required": true
+                  }
+                }
+              }
+            },
             "ms_between_actions": {
               "title": "Wait between commands",
               "type": "number",

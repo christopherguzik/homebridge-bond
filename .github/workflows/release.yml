@@ -1,11 +1,6 @@
 name: Release
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - 'package.json'
   workflow_dispatch:
 
 jobs:
@@ -100,8 +95,8 @@ jobs:
           echo "### NPM Publication :package:" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "- **Version:** ${{ needs.check-version.outputs.new-version }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Package:** homebridge-bond" >> $GITHUB_STEP_SUMMARY
-          echo "- **NPM URL:** https://www.npmjs.com/package/homebridge-bond/v/${{ needs.check-version.outputs.new-version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Package:** homebridge-bond-ultra-low-support-eglo" >> $GITHUB_STEP_SUMMARY
+          echo "- **NPM URL:** https://www.npmjs.com/package/homebridge-bond-ultra-low-support-eglo/v/${{ needs.check-version.outputs.new-version }}" >> $GITHUB_STEP_SUMMARY
 
   create-github-release:
     needs: [check-version, publish-npm]
@@ -142,13 +137,13 @@ jobs:
           ## Installation
           
           \`\`\`bash
-          npm install -g homebridge-bond@$VERSION
+          npm install -g homebridge-bond-ultra-low-support-eglo@$VERSION
           \`\`\`
           
           ## Links
           
-          - [NPM Package](https://www.npmjs.com/package/homebridge-bond/v/$VERSION)
-          - [Changelog](https://github.com/aarons22/homebridge-bond/compare/$PREVIOUS_TAG...v$VERSION)
+          - [NPM Package](https://www.npmjs.com/package/homebridge-bond-ultra-low-support-eglo/v/$VERSION)
+          - [Changelog](https://github.com/christopherguzik/homebridge-bond/compare/$PREVIOUS_TAG...v$VERSION)
           EOF
       
       - name: Create GitHub Release
@@ -167,4 +162,4 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "- **Version:** v${{ needs.check-version.outputs.new-version }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Tag:** v${{ needs.check-version.outputs.new-version }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Release URL:** https://github.com/aarons22/homebridge-bond/releases/tag/v${{ needs.check-version.outputs.new-version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Release URL:** https://github.com/christopherguzik/homebridge-bond/releases/tag/v${{ needs.check-version.outputs.new-version }}" >> $GITHUB_STEP_SUMMARY

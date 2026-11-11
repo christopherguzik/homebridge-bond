@@ -486,6 +486,60 @@ describe('BondApi', () => {
   // -------------------------------------------------------------------------
 
   describe('ms_between_actions queuing', () => {
+    it('retries queue-full for EGLO commands and waits between attempts and the next action', async function() {
+      this.timeout(5000);
+      const queuedApi = makeApi(platform, 600);
+      const device = DeviceFactory.createDevice({ id: 'fan1' });
+      const times: number[] = [];
+      const scope = nock(`http://${TEST_IP}`)
+        .put('/v2/devices/ultra1/actions/TurnOn', {}).reply(() => {
+          times.push(Date.now());
+          return [400, { _error_id: 37, _error_msg: 'transmit queue full' }];
+        })
+        .put('/v2/devices/ultra1/actions/TurnOn', {}).reply(() => {
+          times.push(Date.now());
+          return [200, {}];
+        })
+        .put('/v2/devices/fan1/actions/SetSpeed', { argument: 1 }).reply(() => {
+          times.push(Date.now());
+          return [200, {}];
+        });
+      await Promise.all([queuedApi.setUltraLow('ultra1'), queuedApi.setEgloFanSpeed(device, 1)]);
+      scope.done();
+      expect(times[1] - times[0]).to.be.at.least(580);
+      expect(times[2] - times[1]).to.be.at.least(580);
+    });
+
+    it('rejects a failed EGLO action and continues the queue', async () => {
+      const scope = nock(`http://${TEST_IP}`)
+        .put('/v2/devices/ultra1/actions/TurnOn', {}).reply(400, { _error_id: 42 })
+        .put('/v2/devices/fan1/actions/TurnOff', {}).reply(200, {});
+      const device = DeviceFactory.createDevice({ id: 'fan1' });
+      let failed = false;
+      try {
+        await api.setUltraLow('ultra1');
+      } catch (_) {
+        failed = true;
+      }
+      expect(failed).to.equal(true);
+      await api.setEgloFanPower(device, false);
+      scope.done();
+    });
+
+    it('stops retrying after three queue-full responses', async function() {
+      this.timeout(5000);
+      const scope = nock(`http://${TEST_IP}`)
+        .put('/v2/devices/ultra1/actions/TurnOn', {}).times(3)
+        .reply(400, { _error_id: 37, _error_msg: 'transmit queue full' });
+      let failed = false;
+      try {
+        await api.setUltraLow('ultra1');
+      } catch (_) {
+        failed = true;
+      }
+      expect(failed).to.equal(true);
+      scope.done();
+    });
     it('fires the first action immediately and queues the second', async () => {
       const queuedApi = makeApi(platform, 50); // 50ms between actions
       const device = DeviceFactory.createDevice({ id: 'fan1' });
